@@ -64,12 +64,12 @@ python -m yt_dlp --no-warnings --no-playlist `
 
 ---
 
-## qq-media-mcp（自建：让大肥鱼开口说话、自己画图）
+## qq-media-mcp（自建：让大肥鱼开口说话、自己画图、唱歌）
 
 | | |
 |---|---|
 | 来源 | 本机自建，`C:\Users\gj\dsh-qq\qq-media-mcp`（没有托管在 GitHub 上） |
-| 用途 | 给 QQ 会话里的 agent 补上「自己造媒体」：`qq_say` 合成语音（再交桥接的 `qq_send_voice` 发）、`qq_draw` 画图并直接发到会话 |
+| 用途 | 给 QQ 会话里的 agent 补上「自己造媒体」：`qq_say` 合成语音（再交桥接的 `qq_send_voice` 发）、`qq_draw` 画图并直接发到会话、`qq_sing` 唱歌（走本地 GPT-SoVITS） |
 | 依赖 | Python 3.14 + `edge-tts` 7.3.1（装在 `qq-media-mcp\.venv`，走清华源）；Node + `@modelcontextprotocol/sdk` 1.32.2 |
 | 语音库 | 桥接仓库的 `audio\`（从 `config.json` 的 `socialV2.voice.dir` 读） |
 
@@ -125,6 +125,40 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:3100/api/voice/send" `
 
 **卸载**：删 `C:\Users\gj\dsh-qq\qq-media-mcp`，再去掉 `cordis.patch.yml` 的注册块、`SAFE_PREFIXES` 里那行，
 并把 `config.json` 的两个开关关回去 —— `install.mjs` 是单向的，不能反做。
+
+---
+
+## GPT-SoVITS（自建：让大肥鱼唱歌）
+
+| | |
+|---|---|
+| 来源 | 上游 [RVC-Boss/GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS)（MIT），代码在 `C:\Users\gj\dsh-qq\sing\src\GPT-SoVITS-main` |
+| 入口 | MCP 工具 `qq_sing` / `qq_sing_refs`，实现在 `qq-media-mcp\server.mjs` |
+| 用途 | 零样本音色克隆：给一段参考音频 + 歌词，本地 GPU 现唱，产物 ogg 进桥接语音库，再 `qq_send_voice` 发 |
+| 运行环境 | `C:\Users\gj\dsh-qq\sing\venv`（Python **3.12.14**，用 DSH 桌面端自带的 3.12 建的，没碰应用运行时） |
+| torch | **2.7.1+cu128** / torchaudio 2.7.1+cu128（RTX 5060 Laptop 是 Blackwell sm_120，必须 cu128） |
+| 模型 | ModelScope `XXXXRT/GPT-SoVITS-Pretrained`，共约 4.9 GB，解压到仓库的 `GPT_SoVITS\` |
+| API | 本地 `http://127.0.0.1:9880`（`api_v2.py`），由 MCP 工具按需 detached 拉起 |
+
+**踩过的坑（都记下来，重装时别再来一遍）**：
+
+- **镜像**：aliyun 的 pytorch-wheels 对 torch 限速 0.47 MB/s；用 `https://mirrors.nju.edu.cn/pytorch/whl/cu128/`
+  （7.5 MB/s）。torch 装好后，其余依赖走
+  `-i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements-py312-win-flash_attention\requirements_py312_win_cu128_china.txt`
+  （注意**目录名是连字符**，不是下划线）。
+- **`api_v2` 只支持 `wav` / `raw` / `ogg` / `aac`，不支持 mp3**（`api_v2.py:404` 直接 400
+  `media_type: mp3 is not supported`）。所以唱歌产物是 ogg。
+- **必须用 `custom` 档、且在仓库根目录启动**：`tts_infer.yaml` 里的模型路径是相对仓库根的。
+- **判断下载进度别用 `dir` / `Get-ChildItem`**：正在写的文件目录项长度不刷新，会一直显示 0 字节；
+  用 node 的 `fs.fstatSync(fd).size` 看真值。
+- **参考音频决定一切**：音色和「唱腔」都来自参考。默认 `C:\Users\gj\dsh-qq\sing\ref\ref_xiaoyi.wav`
+  （9.96 秒 / 32 kHz 单声道，用 edge-tts 的晓伊声线合成，和 `qq_say` 默认音色一致）。
+  要换音色、或想唱得更像唱，把带旋律的参考音频路径 + 对应文本写进 `C:\Users\gj\dsh-qq\sing\refs.json`。
+- **冷启动约 20 秒**（加载权重），之后每次 2~3 秒。API 进程由工具用 `detached: true` 拉起，不随 DSH 会话死。
+- 参考音频注册表：`refs.json`，字段 `audio` / `text`（参考音频的原话）/ `lang` / `desc`。
+
+**卸载**：删 `C:\Users\gj\dsh-qq\sing`（约 12 GB：venv 5.7 GB + 模型 4.9 GB + wheel 缓存），
+再把 `server.mjs` 里的 `qq_sing` / `qq_sing_refs` 工具与 `ensureSingServer` 摘掉即可。
 
 ---
 
