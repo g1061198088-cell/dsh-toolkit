@@ -1,6 +1,6 @@
 # 已保留的工具与插件
 
-最后更新：2026-10-22
+最后更新：2026-10-25
 
 ---
 
@@ -61,6 +61,70 @@ python -m yt_dlp --no-warnings --no-playlist `
 
 **注意**：EULA 禁止自动化部署，所以桥接只探测、不启停它 —— 必须手动双击 `launcher.bat`（或项目里的
 `control-center-hidden.vbs`）并在 WebUI 里扫码登录。注入失败的表现是「WS 连着但收不到消息」。
+
+---
+
+## qq-media-mcp（自建：让大肥鱼开口说话、自己画图）
+
+| | |
+|---|---|
+| 来源 | 本机自建，`C:\Users\gj\dsh-qq\qq-media-mcp`（没有托管在 GitHub 上） |
+| 用途 | 给 QQ 会话里的 agent 补上「自己造媒体」：`qq_say` 合成语音（再交桥接的 `qq_send_voice` 发）、`qq_draw` 画图并直接发到会话 |
+| 依赖 | Python 3.14 + `edge-tts` 7.3.1（装在 `qq-media-mcp\.venv`，走清华源）；Node + `@modelcontextprotocol/sdk` 1.32.2 |
+| 语音库 | 桥接仓库的 `audio\`（从 `config.json` 的 `socialV2.voice.dir` 读） |
+
+**为什么必须自建**：QQ 仿真会话的人格正文里写死了「你没有本地工具：不能执行命令、不能读写文件」，
+所以 agent 自己跑不了 TTS；而 `qq_send_voice` 只会发**语音库里已有的文件**，不接受任意路径 / URL / base64。
+
+**接线步骤**（`node install.mjs` 幂等做完前三条）：
+
+1. `plugins\qq-agent-presets\qq-tool-restrict.mjs` 的 `SAFE_PREFIXES` 数组里加一行 `'mcp__qq-media__',`
+   —— 桥接的执行期白名单只放行 `mcp__snowluma__` / `mcp__snowluma-host__` / `mcp__web-search-safe__`，
+   不加这一行，新工具有注册但会被执行期拦掉。
+2. `C:\Users\gj\.dsh\profiles\desktop\cordis.patch.yml` 末尾追加一个 `@deepseek-ai/dsh-mcp-client` 注册块
+   （`serverName: qq-media`）。node 要写 `D:\Program Filesnodejs\node.exe` —— 那个目录名真的长这样，
+   `D:\Program Files\nodejs\node.exe` 是不存在的。
+3. `config.json` 里 `socialV2.voice.enabled` 与 `socialV2.tools.sendVoice` 都改 `true`，然后重启桥接。
+4. **重启一次 DeepSeek Harness 桌面端**，`qq_say` 才会进入 agent 的工具表。
+
+**画图（`qq_draw`）**：桥接**没有**任何「发图片」的工具，也没有对应路由（`/api/socialV2/` 下只有 send-voice /
+send-sticker），所以 `qq_draw` 生成完自己借 SnowLuma 的 OneBot HTTP 直发：
+
+```
+POST http://127.0.0.1:3000/send_group_msg   （或 send_private_msg）
+Authorization: Bearer <桥接 config.json 的 snowluma.accessToken>
+{ "group_id": <群号>, "message": [{ "type": "image", "data": { "file": "base64://<jpeg>" } }] }
+```
+
+因为绕过了桥接，安全性由它自己兜：`authorize()` 拿 `state\social-v2.json` 里该会话的 `agentToken` 比对
+（只能发到自己那个会话）+ 白名单校验，`checkDrawRate()` 限流（每会话 4 张/小时、全天 30 张），
+用量记在 `state\qq-media-draw.json`，图片存在 `state\draw\`。
+生成走 **image.pollinations.ai**（免费免 key，实测 768×768 约 8 秒、~47 KB）。**代价：提示词会发到境外服务**，
+所以工具描述和人格卡里都写明「别把群里对话原文抄进 prompt」。
+
+**音色**：`xiaoyi`（默认，活泼卡通）/ `xiaoxiao` / `yunxi` / `yunjian` / `yunxia` / `yunyang` /
+`xiaobei`（东北话）/ `xiaoni`（陕西话）。
+
+**人格卡**：`dsh\agent-presets\qq-chat-v2\agent.cordis.yml` 第 40 行那条「发语音」被改写过，
+补了「本机管理员已打开语音并额外装了 qq_say」。改完必须重跑
+`node scripts\build-agent-preset-patches.mjs` 重新生成 `plugins\qq-agent-presets\presets\qq-chat-v2.patch.yml`。
+改写时**故意保留了契约测试断言的三段原文**（`语音**默认是关闭的**`、`verified=true 才代表这条语音确实落地`、
+`不要假装发了语音`）——改测试会让以后升级桥接时冲突。
+
+**验证语音链路**（不用等 agent，走操作者通道直接试发）：
+
+```powershell
+$b="C:\Users\gj\dsh-qq\qq-bridge-enhanced-v1.0.3"
+$tok=(Get-Content "$b\state\console-token" -Raw).Trim()
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:3100/api/voice/send" `
+  -Headers @{'x-console-token'=$tok} -ContentType 'application/json' `
+  -Body '{"target":"private:1061198088","file":"<audio 里的 mp3>","verify":true}'
+```
+
+返回 `verified: true` 才算真落地（桥接会回读那条 record 段）。
+
+**卸载**：删 `C:\Users\gj\dsh-qq\qq-media-mcp`，再去掉 `cordis.patch.yml` 的注册块、`SAFE_PREFIXES` 里那行，
+并把 `config.json` 的两个开关关回去 —— `install.mjs` 是单向的，不能反做。
 
 ---
 
