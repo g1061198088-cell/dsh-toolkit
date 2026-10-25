@@ -102,6 +102,13 @@ Authorization: Bearer <桥接 config.json 的 snowluma.accessToken>
 生成走 **image.pollinations.ai**（免费免 key，实测 768×768 约 8 秒、~47 KB）。**代价：提示词会发到境外服务**，
 所以工具描述和人格卡里都写明「别把群里对话原文抄进 prompt」。
 
+**免费档硬限流：每个 IP 每 45 秒只给 1 张**，超了会返回
+`402 {"code":"FREE_LIMIT","message":"…Retry after 40s…"}`（`turbo`/`flux` 都一样）。
+`generateImage()` 因此加了两层保护：`waitForPollenSlot()` 先读 `state\qq-media-draw.json` 的
+`pollinationsNextAt` 把 45 秒节拍踩住（跨 MCP 实例共享），失败再按服务端给的 `Retry after Ns`
+退避重试（最多 3 次）。所以一次画图正常 8 秒，偶尔要等 1 分钟——这是服务端配额，不是本地 bug。
+真要不排队，得去 https://enter.pollinations.ai 拿 pollen key，或者换本地 SD（未做）。
+
 **音色**：`xiaoyi`（默认，活泼卡通）/ `xiaoxiao` / `yunxi` / `yunjian` / `yunxia` / `yunyang` /
 `xiaobei`（东北话）/ `xiaoni`（陕西话）。
 
